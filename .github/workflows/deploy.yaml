@@ -1,0 +1,49 @@
+name: Deploy
+on:
+  push:
+    branches:
+      - master
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    steps:
+
+      - uses: actions/checkout@v2
+
+      - name: Cache local Maven repository
+        uses: actions/cache@v2
+        with:
+          path: ~/.m2/repository
+          key: ${{ runner.os }}-maven-${{ hashFiles('**/pom.xml') }}
+          restore-keys: |
+            ${{ runner.os }}-maven-
+
+      - uses: actions/setup-java@v1
+        with:
+          java-version: 11
+
+      - uses: GoogleCloudPlatform/github-actions/setup-gcloud@master
+        with:
+          service_account_key: ${{ secrets.GCP_PUBLISHER_SERVICE_ACCOUNT_KEY }}
+          export_default_credentials: true
+
+      - run: gcloud auth configure-docker
+
+      - run: echo "VERSION=${GITHUB_SHA::7}" >> $GITHUB_ENV
+
+      - run: mvn package
+
+      - run: |
+          DOCKER_IMAGE_NAME=eu.gcr.io/attraqt-xo/bigtable-autoscaler:$VERSION
+          docker tag spotify/bigtable-autoscaler:latest $DOCKER_IMAGE_NAME
+          docker push $DOCKER_IMAGE_NAME
+
+      - name: Deploy
+        uses: maxkomarychev/oction-create-deployment@v0.7.1
+        with:
+          repo: xo-terragrunt-prod
+          ref: master
+          environment: prod
+          token: ${{ secrets.GH_DEPLOYMENT_CREATION_ACCESS_TOKEN }}
+          task: bigtable-autoscaler:${{ env.VERSION }}
+          required_contexts: <<EMPTY>>
